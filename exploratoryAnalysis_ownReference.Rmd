@@ -1,0 +1,326 @@
+---
+  title: "Data Science Capstone Report"
+author: "Chang Liu"
+date: "November 5, 2015"
+output: pdf_document
+---
+  
+  # Introduction
+  With the increasing capability of collecting data from online user behavior and customers' preferences, analyzing big data for commercial use to target potential customers and provide personalized advertising and recommmendations has become a major challenge. Recommendation systems have become a buzzword since with all the dataset, We are especially interested in knowing which products are to recommend to which group of people in order to grow company's revenue. In this document, we are going to explore a dataset to answer the following question.
+
+#### Question
+Which restaurants in Arizona are recommended to me if I am a female graduate student?
+
+#### Why
+This question is of interest since it provides a framework for recommending services for a special group of people. In this case, the people of interest are females as well as graduate students. It is not only to answer this question but also to offer insights into how to explore the data using collective filtering (finding the answer with collective intelligence from large audience) and use them to serve as a basis for future recommendation systems.
+
+#### Project Background
+This is a capstone project in Data Science course series from Coursera.org. We are given a set of data from Yelp, which is an online business company founded in 2004. The dataset is part of the Yelp Dataset Chanllenge and it needs a space of approximately 575MB in the computer. The dataset is in the format of JSON and consists of 5 data files including the information of business, checkin, review, tip and user. We will explore this dataset and answer the question that we proposed. 
+
+#### Task
+To answer the question, there are several questions we need to answer first.
+* Who are the females in the dataset
+
+* How to determine what they like
+
+* How to model the graduate student feature
+
+* How to find the restaurants which they would prefer
+
+
+With all those questions in mind, we develop a filtering method as shown in the methods session.
+
+# Methods
+
+In this session, we are going to explain the steps for the created recommendation system. I will first give you an overview of three major steps that I used for prediction followed by a more detailed description for each step.
+
+## Overview of Prediction Algorithm
+
+* Step 1, find all the female users from the user dataset
+
+* Step 2, list all the restaurant features that females pay attention to from restaurant reviews
+
+* Step 3, look for and sort the restaurants in AZ which match most with the features females care for in step two
+
+## More Details
+
+First, we use the data from "yelp_academic_dataset_user.json" to find the female reviewers. To do this, we need to get the data from Social Security Administration (see <https://www.ssa.gov/oact/babynames/limits.html>) for all the most used female and male names and compare those with the names on Yelp user data profile. This will give us a set of female reviews ID.
+
+The number of users in user file is 366715
+```{r}
+setwd("C:/Users/chliu/Documents/R Workplace/yelp_dataset_challenge_academic_dataset/yelp_dataset_challenge_academic_dataset/")
+library(rjson)
+user_file <- "yelp_academic_dataset_user.json"
+lines <-  readLines(user_file)
+user_data <- lapply(X=lines, fromJSON)
+length(user_data)
+```
+After filtering with the female names, we get a set of female IDs. The size of this set of female IDs is 152370
+```{r}
+female_id <- list()
+key <- 1
+female_names <- read.table("yob2014_f.txt",sep=",",header = FALSE)
+male_names <- read.table("yob2014_m.txt",sep=",",header = FALSE)
+for (i in 1:length(lines)){
+  flag_female <- user_data[[i]]$name %in% female_names[,1]
+  flag_female_count <- female_names[which(user_data[[i]]$name==female_names[,1]),3]
+  flag_male <- user_data[[i]]$name %in% male_names[,1]
+  flag_male_count <- male_names[which(user_data[[i]]$name ==male_names[,1]),3]
+  flag = (flag_female && !flag_male ) || (flag_female_count > flag_male_count)
+  if (!is.na(flag) && flag == TRUE){
+    female_id[key] <- user_data[[i]]$user_id
+    key <- key+1
+  }
+}
+```
+
+
+Second, we abstract all the important features/key words which females draw attention to. To do this, restaurants ID can be drawn with the "yelp_academic_dataset_business.json" data. From "yelp_academic_dataset_review.json" file, we can find all the reviews for restaurants. Then we filter the restaurant reviews for the female IDs which we have obtained from the first step. By putting together all the reviews and using one-stem histogram from text mining, we can obtain a set of key words which are from the female customers.
+
+```{r}
+business_file <- "yelp_academic_dataset_business.json"
+b_lines <-  readLines(business_file)
+length(b_lines) #61184 business on file
+business_data <- lapply(X=b_lines, fromJSON)
+sum <- 0
+text <- ""
+res_id <- list()
+for (i in 1:length(b_lines)){
+  if (sum(grepl("Restaurants",business_data[[i]]$categories))>0){
+    sum <- sum+1
+    res_id[sum] <- business_data[[i]]$business_id
+  }
+}# 21892 restaurants all together
+```
+
+```{r}
+review_file <- "yelp_academic_dataset_review.json"
+lines <-  readLines(review_file)
+lines <- lines[1:10000]
+review_data <- lapply(X=lines, fromJSON)
+# length(lines) 1569264
+sum <- 0 
+review_num<- list()
+for (i in 1:length(lines)){
+  flag1 <- review_data[[i]]$business_id %in% res_id
+  flag2 <- review_data[[i]]$user_id %in% female_id
+  if (flag1 && flag2){
+    sum <- sum+1
+    review_num[sum] <- i
+  }
+}
+
+for (i in 1:sum){
+  write(x=review_data[[review_num[[i]]]]$text,file="reviews",ncolumns = if(is.character(x)) 1 else 5,
+        append = TRUE, sep = " ")
+}
+review_text <- paste(readLines("reviews"),collapse = " ")
+library(tm)
+review_source <- VectorSource(review_text)
+corpus <- Corpus(review_source)
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, stripWhitespace)
+corpus <- tm_map(corpus, removeWords, stopwords("english"))
+dtm <- DocumentTermMatrix(corpus)
+dtm2 <- as.matrix(dtm)
+frequency <- colSums(dtm2)
+frequency <- sort(frequency, decreasing=TRUE)
+head(frequency)
+library(wordcloud)
+words <- names(frequency)
+wordcloud(words[1:50], frequency[1:50])
+
+
+```
+We can again use the same method for finding the most featured words for all the restaurant review and compared with the female review, in which way, we can know what are the most interesting things for female reviewers.
+```{r}
+review_file <- "yelp_academic_dataset_review.json"
+lines <-  readLines(review_file)
+lines <- lines[1:10000]
+review_data <- lapply(X=lines, fromJSON)
+# length(lines) 1569264
+sum_1 <- 0 
+review_num_1<- list()
+for (i in 1:length(lines)){
+  flag1 <- review_data[[i]]$business_id %in% res_id
+  if (flag1){
+    sum_1 <- sum_1+1
+    review_num_1[sum_1] <- i
+  }
+}
+
+for (i in 1:sum_1){
+  write(x=review_data[[review_num_1[[i]]]]$text,file="reviews_all",ncolumns = if(is.character(x)) 1 else 5,
+        append = TRUE, sep = " ")
+}
+review_text_1 <- paste(readLines("reviews_all"),collapse = " ")
+library(tm)
+review_source_1 <- VectorSource(review_text_1)
+corpus_1 <- Corpus(review_source_1)
+corpus_1 <- tm_map(corpus_1, content_transformer(tolower))
+corpus_1 <- tm_map(corpus_1, removePunctuation)
+corpus_1 <- tm_map(corpus_1, stripWhitespace)
+corpus_1 <- tm_map(corpus_1, removeWords, stopwords("english"))
+dtm_1 <- DocumentTermMatrix(corpus_1)
+dtm2_1 <- as.matrix(dtm_1)
+frequency_1 <- colSums(dtm2_1)
+frequency_1 <- sort(frequency_1, decreasing=TRUE)
+head(frequency_1)
+library(wordcloud)
+words_1 <- names(frequency_1)
+wordcloud(words_1[1:50], frequency[1:50])
+```
+
+Now we can find the features which female reviewers care more than the average reviewers. We sort the words by frequency and compare the rank of the words frequency from female reviews to the average reviews. Here are the features which females prefer:
+  ```{r}
+for (i in 1:300){
+  if (!(names(frequency[i]) %in% names(frequency_1[1:(i+20)])))
+    write(names(frequency)[i],file="female_words",ncolumns = if(is.character(x)) 1 else 5,
+          append = TRUE, sep = " ")
+}
+female_words <- paste(readLines("female_words"),collapse = " ")
+head(female_words)
+```
+
+Third, we find all the potential restaurants in Arizona State which has good characters for female gradaute students. From "yelp_academic_dataset_business.json" dataset, restaurant IDs in Arizona state can be drawn. Then we confine our results with the following  filtering strategy:
+  1. The restaurants should have stars more than average score (or more) of the average in Arizona.
+2. The restaurants should not be too pricy -- to satisfygraduate student feature
+3. The restaurants should have reviews which fit the key words from the second step -- to satisfy female student feature
+
+Here is the histogram of the restaurant stars in Arizona.
+```{r}
+sum <- 0
+key <- 1
+az_res_id <- list()
+az_res_star <- list()
+az_res_price <- list()
+for (i in 1:length(b_lines)){
+  if (business_data[[i]]$state == "AZ" && 
+      sum(grepl("Restaurants",business_data[[i]]$categories))>0){
+    sum <- sum+1
+    az_res_id[[key]]<- business_data[i]$business_id
+    az_res_star[[key]] <- business_data[[i]]$stars
+    az_res_price[[key]] <- business_data[[i]]$attributes$'Price Range'
+    key <- key+1
+  }
+}# key=7986
+hist(unlist(az_res_star),main="Histogram for Restaurant Stars in Arizona", 
+     xlab="Stars", freq=TRUE,
+     border="blue", 
+     col="lightblue", breaks=c(1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0))
+```
+The mean value for the star is
+```{r}
+avg_star <- mean(unlist(az_res_star))
+```
+Similarly, we can draw a histogram for the restaurant prices in Arizona and remove those which are too pricy.
+```{r}
+
+hist(unlist(az_res_price),main="Histogram for Restaurant Price in Arizona", 
+     xlab="Price Scale", 
+     border="blue", 
+     col="pink")
+
+```
+Now a subset of the restaurant can be obtained based on the first two filtering rules.
+```{r}
+
+key <- 1
+az_res_id <- list()
+az_res_star <- list()
+az_res_price <- list()
+for (i in 1:length(b_lines)){
+  if (business_data[[i]]$state == "AZ" && 
+      sum(grepl("Restaurants",business_data[[i]]$categories))>0 &&
+      !is.null(business_data[[i]]$stars) &&
+      business_data[[i]]$stars > 4 &&
+      !is.null(business_data[[i]]$attributes$'Price Range') &&
+      business_data[[i]]$attributes$'Price Range'<=3){
+    az_res_id[[key]]<- business_data[[i]]$business_id
+    az_res_star[[key]] <- business_data[[i]]$stars
+    az_res_price[[key]] <- business_data[[i]]$attributes$'Price Range'
+    key <- key+1
+  }
+}#key = 787
+
+```
+
+Now we are looking up the reviews file to find all the potential restaurant reviews and filter them based on the matching between female prefered features and the reviews. 
+
+```{r}
+review_file <- "yelp_academic_dataset_review.json"
+lines <-  readLines(review_file)
+lines <- lines[sample(length(lines), 100000)]
+review_data <- lapply(X=lines, fromJSON)
+# length(lines) 1569264
+az_id_selected <- list()
+k <- 1
+for (j in 1:787) {
+  sum_1 <- 0 
+  review_num_1<- list()
+  for (i in 1:length(lines)) {
+    flag1 <- review_data[[i]]$business_id == az_res_id[[j]]
+    if (flag1){
+      sum_1 <- sum_1+1
+      #write(review_data[[sum_1]]$text,file = c("review",j),append = TRUE)
+    } 
+  }
+  if (sum_1>10) {
+    az_id_selected[[k]]=az_res_id[[j]]
+    k <- k+1
+  }
+} #k=79
+
+
+
+for (j in 1:79) {
+  review_num_1<- list()
+  for (i in 1:length(lines)) {
+    flag1 <- review_data[[i]]$business_id == az_id_selected[[j]]
+    if (flag1){
+      write(x=review_data[[i]]$text,file = paste("review",j,sep=""),ncolumns = if(is.character(x)) 1 else 5,append = FALSE, sep = " ")
+    } 
+  }
+}
+female_words <- readLines("female_words")
+female_words <- unlist(strsplit(female_words,split=" "))
+score <- vector()
+id <- vector()
+key <- 1
+for (j in 1:79) {
+  score[j] <- 0
+  review <- readLines(paste("review",j,sep=""))
+  for(i in 1:47){
+    score[j] <- score[j] + sum(grepl(female_words[i],review),na.rm=TRUE)
+  }
+  if (score[j]>=10) {
+    id[key] <- az_id_selected[j]
+    key <- key+1
+  }
+}
+
+for (i in 1:length(b_lines)){
+  if (business_data[[i]]$business_id %in% id){
+    print(business_data[[i]]$name) #"Crackers & Co Cafe""Cafe Monarch" "Good Fellas Grill" "The Gladly"
+  }
+}
+```
+
+
+
+
+# Results
+need at least one plot
+need exploratory data analysis
+results need interpretation
+need to describe of how the results related to the primary question
+answer to the question clearly
+
+# Discussion
+
+
+
+Some interesting insights can be found here <http://media.grubhub.com/files/doc_downloads/GrubHub-Inc-Men-vs-Women-Eating-Preferences-White-Paper_v001_b3cw14.pdf>
+  
+  Limitations: The algorithm still has its limitations since although it looks at reviews which pays attention to the features which females prefer but it fails to learn the positive or negative attitude for those features. 
